@@ -24,11 +24,265 @@ index f067297..a2a83b1 100644
  
      // Generate the WAD hash table.  Speed things up a bit.
      W_GenerateHashTable();
+diff --git a/src/doomgeneric.c b/src/doomgeneric.c
+index d85beac..3621a35 100644
+--- a/src/doomgeneric.c
++++ b/src/doomgeneric.c
+@@ -21,23 +21,133 @@
+ #include "m_argv.h"
+ 
+ #include <stdint.h>
++#include <stdio.h>
+ #include <stdlib.h>
++#include <sys/ioctl.h>
++#include <unistd.h>
+ 
+ unsigned DOOMGENERIC_RESX = 80;
+ unsigned DOOMGENERIC_RESY = 50;
++unsigned int DG_TermCols = 80;
++unsigned int DG_TermRows = 24;
+ 
+ uint32_t *DG_ScreenBuffer = 0;
+ 
+-void dg_Create()
++static void DG_ComputeResolution(int cols, int rows, unsigned int *out_w, unsigned int *out_h)
+ {
+-	int i;
+-	i = M_CheckParmWithArgs("-scaling", 1);
++	int i = M_CheckParmWithArgs("-scaling", 1);
+ 	if (i > 0) {
+-		i = atoi(myargv[i + 1]);
+-		DOOMGENERIC_RESX = SCREENWIDTH / i;
+-		DOOMGENERIC_RESY = SCREENHEIGHT / i;
++		int s = atoi(myargv[i + 1]);
++		if (s <= 0) s = 4;
++		*out_w = SCREENWIDTH / s;
++		*out_h = SCREENHEIGHT / s;
++		return;
++	}
++
++	int w_arg = M_CheckParmWithArgs("-width", 1);
++	int h_arg = M_CheckParmWithArgs("-height", 1);
++	if (w_arg > 0 && h_arg > 0) {
++		*out_w = (unsigned int)atoi(myargv[w_arg + 1]);
++		*out_h = (unsigned int)atoi(myargv[h_arg + 1]);
++		return;
++	}
++
++	if (cols <= 0) cols = 80;
++	if (rows <= 0) rows = 24;
++
++	/* Each pixel is rendered 2 terminal characters wide */
++	unsigned int max_w = (unsigned int)(cols / 2);
++	unsigned int max_h = (unsigned int)rows;
++
++	if (max_w > SCREENWIDTH) max_w = SCREENWIDTH;
++	if (max_h > SCREENHEIGHT) max_h = SCREENHEIGHT;
++	if (max_w < 16) max_w = 16;
++	if (max_h < 10) max_h = 10;
++
++	if (M_CheckParm("-stretch") > 0) {
++		*out_w = max_w;
++		*out_h = max_h;
++		return;
++	}
++
++	/* Fit within max_w and max_h maintaining 16:10 aspect ratio (w / h = 8 / 5) */
++	unsigned int w = max_w;
++	unsigned int h = (w * 5 + 4) / 8;
++	if (h > max_h) {
++		h = max_h;
++		w = (h * 8) / 5;
++	}
++	if (w > max_w) w = max_w;
++	if (h > max_h) h = max_h;
++	if (w < 16) w = 16;
++	if (h < 10) h = 10;
++
++	*out_w = w;
++	*out_h = h;
++}
++
++void DG_SetTerminalSize(int cols, int rows)
++{
++	if (cols <= 0 || rows <= 0) return;
++	DG_TermCols = (unsigned int)cols;
++	DG_TermRows = (unsigned int)rows;
++
++	struct winsize ws = { .ws_row = (unsigned short)rows, .ws_col = (unsigned short)cols };
++	ioctl(STDIN_FILENO, TIOCSWINSZ, &ws);
++
++	if (!DG_ScreenBuffer) {
++		return; /* Will be created with these dimensions during dg_Create */
+ 	}
+ 
++	unsigned int new_w = 0, new_h = 0;
++	DG_ComputeResolution(cols, rows, &new_w, &new_h);
++
++	if (new_w == DOOMGENERIC_RESX && new_h == DOOMGENERIC_RESY) {
++		return;
++	}
++
++	DOOMGENERIC_RESX = new_w;
++	DOOMGENERIC_RESY = new_h;
++
++	void *new_buf = realloc(DG_ScreenBuffer, (unsigned long)new_w * new_h * 4);
++	if (new_buf) {
++		DG_ScreenBuffer = (uint32_t *)new_buf;
++	}
++
++	I_UpdateVideoResolution(new_w, new_h);
++	DG_ResizeOutputBuffer(new_w, new_h);
++
++	/* Clear terminal screen to remove borders from previous resolution */
++	fputs("\033[2J\033[1;1H", stdout);
++	fflush(stdout);
++}
++
++#if defined(__wasm__)
++__attribute__((export_name("set_terminal_size")))
++#endif
++void set_terminal_size(int cols, int rows)
++{
++	DG_SetTerminalSize(cols, rows);
++}
++
++void dg_Create()
++{
++	/* Query terminal size via ioctl or environment if not already set */
++	struct winsize ws;
++	if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0) {
++		DG_TermCols = ws.ws_col;
++		DG_TermRows = ws.ws_row;
++	} else {
++		const char *env_c = getenv("COLUMNS");
++		const char *env_r = getenv("LINES");
++		if (env_c && *env_c) DG_TermCols = (unsigned int)atoi(env_c);
++		if (env_r && *env_r) DG_TermRows = (unsigned int)atoi(env_r);
++	}
++	if (DG_TermCols == 0) DG_TermCols = 80;
++	if (DG_TermRows == 0) DG_TermRows = 24;
++
++	DG_ComputeResolution(DG_TermCols, DG_TermRows, &DOOMGENERIC_RESX, &DOOMGENERIC_RESY);
++
+ 	DG_ScreenBuffer = malloc((unsigned long)DOOMGENERIC_RESX * DOOMGENERIC_RESY * 4);
+ 
+ 	DG_Init();
+diff --git a/src/doomgeneric.h b/src/doomgeneric.h
+index 249f557..046f2d8 100644
+--- a/src/doomgeneric.h
++++ b/src/doomgeneric.h
+@@ -5,6 +5,8 @@
+ 
+ extern unsigned DOOMGENERIC_RESX;
+ extern unsigned DOOMGENERIC_RESY;
++extern unsigned int DG_TermCols;
++extern unsigned int DG_TermRows;
+ 
+ extern uint32_t *DG_ScreenBuffer;
+ 
+@@ -16,4 +18,9 @@ int DG_GetKey(int *pressed, unsigned char *key);
+ void DG_SetWindowTitle(const char *title);
+ void DG_ReadInput(void);
+ 
++void DG_SetTerminalSize(int cols, int rows);
++void DG_ResizeOutputBuffer(unsigned int w, unsigned int h);
++void I_UpdateVideoResolution(unsigned int w, unsigned int h);
++
+ #endif //DOOM_GENERIC
++
 diff --git a/src/doomgeneric_ascii.c b/src/doomgeneric_ascii.c
-index 9791935..15b53ba 100644
+index 9791935..c76a410 100644
 --- a/src/doomgeneric_ascii.c
 +++ b/src/doomgeneric_ascii.c
-@@ -680,7 +680,14 @@ void DG_ReadInput(void)
+@@ -37,6 +37,7 @@
+ #include <termios.h>
+ #include <time.h>
+ #include <unistd.h>
++#include <sys/ioctl.h>
+ #endif
+ 
+ #ifdef OS_WINDOWS
+@@ -288,13 +289,23 @@ void DG_Init(void)
+ 	 */
+ 	output_buffer_size = ((color_enabled ? 19U : 0U) + (character_set == ASCII ? 2U : 6U))
+ 			* DOOMGENERIC_RESX * DOOMGENERIC_RESY
+-		+ DOOMGENERIC_RESY + 1U + 4U + (bold_enabled ? 4U : 0U) + (erase_enabled ? 4U : 0U)
+-		+ ((color_enabled || bold_enabled) ? 4U : 0U);
++		+ DOOMGENERIC_RESY * 32U + 2048U;
+ 	output_buffer = malloc(output_buffer_size);
+ 
+ 	CALL(clock_gettime(CLK, &ts_init), "DG_Init: clock_gettime error %d");
+ }
+ 
++void DG_ResizeOutputBuffer(unsigned int w, unsigned int h)
++{
++	output_buffer_size = ((color_enabled ? 19U : 0U) + (character_set == ASCII ? 2U : 6U))
++			* w * h
++		+ h * 32U + 2048U;
++	void *new_buf = realloc(output_buffer, output_buffer_size);
++	if (new_buf) {
++		output_buffer = (char *)new_buf;
++	}
++}
++
+ void DG_DrawFrame(void)
+ {
+ 	/* Clear screen if first frame */
+@@ -304,6 +315,8 @@ void DG_DrawFrame(void)
+ 		CALL_STDOUT(fputs("\033[1;1H\033[2J", stdout), "DG_DrawFrame: fputs error %d");
+ 	}
+ 
++
++
+ #ifdef DG_DEMO
+ 	struct timespec now;
+ 	CALL(clock_gettime(CLK, &now), "DG_DrawFrame: clock_gettime error %d");
+@@ -318,8 +331,21 @@ void DG_DrawFrame(void)
+ 	struct color_t *pixel = (struct color_t *)DG_ScreenBuffer;
+ 	char *buf = output_buffer;
+ 
++	unsigned int out_cols = DOOMGENERIC_RESX * 2;
++	unsigned int pad_left = (DG_TermCols > out_cols) ? (DG_TermCols - out_cols) / 2 : 0;
++	unsigned int pad_top = (DG_TermRows > DOOMGENERIC_RESY) ? (DG_TermRows - DOOMGENERIC_RESY) / 2 : 0;
++
+ 	/* fill output buffer */
+-	BUF_PUTS(buf, "\033[;H"); /* move cursor to top left corner */
++	if (pad_top > 0 || pad_left > 0) {
++		char pos_buf[32];
++		int pos_len = snprintf(pos_buf, sizeof(pos_buf), "\033[%u;%uH", 1 + pad_top, 1 + pad_left);
++		if (pos_len > 0) {
++			BUF_MEMCPY(buf, pos_buf, (size_t)pos_len);
++		}
++	} else {
++		BUF_PUTS(buf, "\033[;H"); /* move cursor to top left corner */
++	}
++
+ 	if (erase_enabled)
+ 		BUF_PUTS(buf, "\033[2J");
+ 	if (bold_enabled)
+@@ -393,8 +419,18 @@ void DG_DrawFrame(void)
+ 
+ 			pixel++;
+ 		}
+-		if (row + 1 < DOOMGENERIC_RESY)
+-			BUF_PUTCHAR(buf, '\n');
++		if (row + 1 < DOOMGENERIC_RESY) {
++			if (pad_left > 0) {
++				char next_pos[32];
++				int next_len = snprintf(next_pos, sizeof(next_pos), "\033[%u;%uH", 1 + pad_top + row + 1, 1 + pad_left);
++				if (next_len > 0) {
++					BUF_MEMCPY(buf, next_pos, (size_t)next_len);
++				}
++			} else {
++				BUF_PUTCHAR(buf, '\r');
++				BUF_PUTCHAR(buf, '\n');
++			}
++		}
+ 	}
+ 	if (color_enabled || bold_enabled)
+ 		BUF_PUTS(buf, "\033[0m");
+@@ -680,7 +716,14 @@ void DG_ReadInput(void)
  	newt.c_cc[VTIME] = 0;
  	CALL(tcsetattr(STDIN_FILENO, TCSANOW, &newt), "DG_DrawFrame: tcsetattr error %d");
  
@@ -95,7 +349,7 @@ index eba110d..80dee40 100644
  
  //
 diff --git a/src/i_video.c b/src/i_video.c
-index ebdae4d..653144b 100644
+index ebdae4d..9328a91 100644
 --- a/src/i_video.c
 +++ b/src/i_video.c
 @@ -186,7 +186,7 @@ void I_InitGraphics (void)
@@ -107,3 +361,58 @@ index ebdae4d..653144b 100644
      I_InitInput();
  }
  
+@@ -209,27 +209,39 @@ void I_UpdateNoBlit (void)
+ {
+ }
+ 
++void I_UpdateVideoResolution(unsigned int w, unsigned int h)
++{
++	s_Fb.xres = w;
++	s_Fb.yres = h;
++	s_Fb.xres_virtual = w;
++	s_Fb.yres_virtual = h;
++	fb_scaling = s_Fb.xres > 0 ? (SCREENWIDTH / s_Fb.xres) : 1;
++}
++
+ //
+ // I_FinishUpdate
+ //
+ 
+ void I_FinishUpdate (void)
+ {
+-    int y;
+-    unsigned char *line_in, *line_out;
+-
+-    /* DRAW SCREEN */
+-    line_in  = (unsigned char *) I_VideoBuffer;
+-    line_out = (unsigned char *) DG_ScreenBuffer;
+-
+-    y = s_Fb.yres;
+-
+-    while (y--)
+-    {
+-		cmap_to_fb((void*)line_out, (void*)line_in, SCREENWIDTH);
+-		line_out += (SCREENWIDTH / fb_scaling * (s_Fb.bits_per_pixel/8));
+-        line_in += SCREENWIDTH * fb_scaling;
+-    }
++	if (!DG_ScreenBuffer || !I_VideoBuffer) return;
++
++	unsigned int target_w = s_Fb.xres;
++	unsigned int target_h = s_Fb.yres;
++
++	uint32_t *out = DG_ScreenBuffer;
++	for (unsigned int y = 0; y < target_h; y++)
++	{
++		unsigned int src_y = (y * SCREENHEIGHT) / target_h;
++		const byte *src_row = I_VideoBuffer + src_y * SCREENWIDTH;
++
++		for (unsigned int x = 0; x < target_w; x++)
++		{
++			unsigned int src_x = (x * SCREENWIDTH) / target_w;
++			struct color c = colors[src_row[src_x]];
++			out[y * target_w + x] = *(uint32_t *)&c;
++		}
++	}
+ 
+ 	DG_DrawFrame();
+ }
