@@ -1,0 +1,38 @@
+{
+  "name": "doom-wasm",
+  "version": "0.3.2",
+  "description": "Classic Doom (doom-ascii) compiled to WebAssembly (wasm32-wasip1) with Binaryen Asyncify and wasi-termios-brsh for brsh and WASI environments",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./doom.wasm": "./dist/doom.wasm",
+    "./dist/doom.wasm": "./dist/doom.wasm"
+  },
+  "files": [
+    "dist/doom.wasm",
+    "doom.wasm",
+    "index.js",
+    "patches",
+    "shim",
+    "scripts/build.sh"
+  ],
+  "scripts": {
+    "build": "bash scripts/build.sh"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eliotstocker/doom-wasm.git"
+  },
+  "keywords": [
+    "doom",
+    "ascii",
+    "wasm",
+    "wasi",
+    "asyncify",
+    "terminal",
+    "brsh",
+    "game"
+  ],
+  "author": "Eliot Stocker",
+  "license": "GPL-2.0-or-later"
+}

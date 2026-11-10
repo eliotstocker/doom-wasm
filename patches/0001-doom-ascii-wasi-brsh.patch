@@ -1,0 +1,109 @@
+diff --git a/src/d_main.c b/src/d_main.c
+index f067297..a2a83b1 100644
+--- a/src/d_main.c
++++ b/src/d_main.c
+@@ -1060,7 +1060,11 @@ void PrintGameVersion(void)
+     }
+ }
+ 
+-// Function called at exit to display the ENDOOM screen
++static void D_CheckDemoStatus_AtExit(void)
++{
++    G_CheckDemoStatus();
++}
++
+ 
+ static void D_Endoom(void)
+ {
+@@ -1508,7 +1512,7 @@ void D_DoomMain (void)
+         printf("Playing demo %s.\n", file);
+     }
+ 
+-    I_AtExit((atexit_func_t) G_CheckDemoStatus, true);
++    I_AtExit(D_CheckDemoStatus_AtExit, true);
+ 
+     // Generate the WAD hash table.  Speed things up a bit.
+     W_GenerateHashTable();
+diff --git a/src/doomgeneric_ascii.c b/src/doomgeneric_ascii.c
+index 9791935..15b53ba 100644
+--- a/src/doomgeneric_ascii.c
++++ b/src/doomgeneric_ascii.c
+@@ -680,7 +680,14 @@ void DG_ReadInput(void)
+ 	newt.c_cc[VTIME] = 0;
+ 	CALL(tcsetattr(STDIN_FILENO, TCSANOW, &newt), "DG_DrawFrame: tcsetattr error %d");
+ 
+-	CALL(read(2, raw_input_buffer, INPUT_BUFFER_LEN - 1U) < 0, "DG_DrawFrame: read error %d");
++	ssize_t n = read(STDIN_FILENO, raw_input_buffer, INPUT_BUFFER_LEN - 1U);
++	if (n < 0) {
++		if (errno != EAGAIN && errno != EWOULDBLOCK) {
++			I_Error("DG_DrawFrame: read error %d", errno);
++		}
++		n = 0;
++	}
++	raw_input_buffer[n] = '\0';
+ 
+ 	CALL(tcsetattr(STDIN_FILENO, TCSANOW, &oldt), "DG_DrawFrame: tcsetattr error %d");
+ 
+diff --git a/src/g_game.c b/src/g_game.c
+index 3f6f5aa..c687ef4 100644
+--- a/src/g_game.c
++++ b/src/g_game.c
+@@ -2262,8 +2262,9 @@ bool G_CheckDemoStatus (void)
+         timingdemo = false;
+         demoplayback = false;
+ 
+-	I_Error ("timed %i gametics in %i realtics (%f fps)",
+-                 gametic, realtics, fps);
++	printf("timed %i gametics in %i realtics (%f fps)\n",
++               gametic, realtics, fps);
++        I_Quit();
+     } 
+ 	 
+     if (demoplayback) 
+diff --git a/src/i_system.c b/src/i_system.c
+index eba110d..80dee40 100644
+--- a/src/i_system.c
++++ b/src/i_system.c
+@@ -257,11 +257,7 @@ void I_Quit (void)
+         entry = entry->next;
+     }
+ 
+-#if ORIGCODE
+-    SDL_Quit();
+-
+     exit(0);
+-#endif
+ }
+ 
+ #if !defined(_WIN32) && !defined(__MACOSX__)
+@@ -454,16 +450,7 @@ void I_Error (char *error, ...)
+     }
+ #endif
+ 
+-    // abort();
+-#if ORIGCODE
+-    SDL_Quit();
+-
+-    exit(-1);
+-#else
+-    while (true)
+-    {
+-    }
+-#endif
++    exit(1);
+ }
+ 
+ //
+diff --git a/src/i_video.c b/src/i_video.c
+index ebdae4d..653144b 100644
+--- a/src/i_video.c
++++ b/src/i_video.c
+@@ -186,7 +186,7 @@ void I_InitGraphics (void)
+ 
+ 	screenvisible = true;
+ 
+-    extern int I_InitInput(void);
++    extern void I_InitInput(void);
+     I_InitInput();
+ }
+ 

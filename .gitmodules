@@ -1,0 +1,3 @@
+[submodule "deps/wasi-termios-brsh"]
+	path = deps/wasi-termios-brsh
+	url = https://github.com/eliotstocker/wasi-termios-brsh.git
