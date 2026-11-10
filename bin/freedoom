@@ -1,0 +1,51 @@
+#!/bin/sh
+# Freedoom launcher for doom-wasm in brsh
+# Downloads Freedoom Phase 1 (or Phase 2) WAD if not already cached in /usr/share/games/doom
+
+WAD_DIR="/usr/share/games/doom"
+WAD_NAME="freedoom1.wad"
+WAD_URL="https://raw.githubusercontent.com/redox-os/freedoom/master/freedoom1.wad"
+EXTRA_ARGS=""
+
+for ARG in $@
+do
+    case "$ARG" in
+        --phase2|--freedoom2|-2)
+            WAD_NAME="freedoom2.wad"
+            WAD_URL="https://raw.githubusercontent.com/redox-os/freedoom/master/freedoom2.wad"
+            ;;
+        --phase1|--freedoom1|-1)
+            WAD_NAME="freedoom1.wad"
+            WAD_URL="https://raw.githubusercontent.com/redox-os/freedoom/master/freedoom1.wad"
+            ;;
+        --help|-h)
+            echo "Usage: freedoom [--phase1 | --phase2] [doom options...]"
+            echo ""
+            echo "Downloads Freedoom into /usr/share/games/doom/ if not already cached, then launches doom."
+            echo ""
+            echo "Options:"
+            echo "  -1, --phase1, --freedoom1   Launch Freedoom: Phase 1 (default)"
+            echo "  -2, --phase2, --freedoom2   Launch Freedoom: Phase 2"
+            echo "  -h, --help                  Show this help message"
+            return 0
+            ;;
+        *)
+            EXTRA_ARGS="$EXTRA_ARGS $ARG"
+            ;;
+    esac
+done
+
+WAD_FILE="$WAD_DIR/$WAD_NAME"
+
+if [ ! -f "$WAD_FILE" ]; then
+    echo "Freedoom WAD not found at $WAD_FILE — downloading $WAD_NAME..."
+    mkdir -p "$WAD_DIR"
+    curl -# -L -o "$WAD_FILE" "$WAD_URL"
+    if [ $? -ne 0 ]; then
+        echo "freedoom: failed to download $WAD_URL"
+        rm -f "$WAD_FILE"
+        return 1
+    fi
+fi
+
+doom -iwad "$WAD_FILE" -nosound $EXTRA_ARGS

@@ -6,9 +6,11 @@
   "exports": {
     ".": "./index.js",
     "./doom.wasm": "./dist/doom.wasm",
-    "./dist/doom.wasm": "./dist/doom.wasm"
+    "./dist/doom.wasm": "./dist/doom.wasm",
+    "./bin/freedoom": "./bin/freedoom"
   },
   "files": [
+    "bin/freedoom",
     "dist/doom.wasm",
     "doom.wasm",
     "index.js",

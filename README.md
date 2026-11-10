@@ -19,13 +19,16 @@ Doom requires an IWAD data file to run (such as the original shareware `doom1.wa
 Inside a `brsh` shell:
 
 ```sh
-# Download shareware IWAD
+# Install doom (installs both `doom` and the `freedoom` launcher script)
+wbt install doom
+
+# Option 1: Launch Freedoom automatically (downloads freedoom1.wad to /usr/share/games/doom/ if missing)
+freedoom
+# or Freedoom: Phase 2
+freedoom --phase2
+
+# Option 2: Download original shareware IWAD manually and run `doom`
 curl -o doom1.wad https://raw.githubusercontent.com/wasm3/pywasm3-doom-demo/main/doom1.wad
-
-# Install doom binary
-wbt install https://cdn.jsdelivr.net/gh/eliotstocker/doom-wasm@main/dist/doom.wasm --name doom
-
-# Launch Doom
 doom -nosound
 ```
 
