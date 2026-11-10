@@ -192,7 +192,7 @@ index 249f557..046f2d8 100644
  #endif //DOOM_GENERIC
 +
 diff --git a/src/doomgeneric_ascii.c b/src/doomgeneric_ascii.c
-index 9791935..c76a410 100644
+index 9791935..c68ea4e 100644
 --- a/src/doomgeneric_ascii.c
 +++ b/src/doomgeneric_ascii.c
 @@ -37,6 +37,7 @@
@@ -282,7 +282,30 @@ index 9791935..c76a410 100644
  	}
  	if (color_enabled || bold_enabled)
  		BUF_PUTS(buf, "\033[0m");
-@@ -680,7 +716,14 @@ void DG_ReadInput(void)
+@@ -591,6 +627,14 @@ static inline unsigned char convertCsiToDoomKey(const char **const buf)
+ static inline unsigned char convertSs3ToDoomKey(const char **const buf)
+ {
+ 	switch (**buf) {
++	case 'A':
++		return KEY_UPARROW;
++	case 'B':
++		return KEY_DOWNARROW;
++	case 'C':
++		return KEY_RIGHTARROW;
++	case 'D':
++		return KEY_LEFTARROW;
+ 	case 'P':
+ 		return KEY_F1;
+ 	case 'Q':
+@@ -608,6 +652,7 @@ static inline unsigned char convertToDoomKey(const char **const buf)
+ {
+ 	switch (**buf) {
+ 	case '\012':
++	case '\015':
+ 		return KEY_ENTER;
+ 	case '\033':
+ 		switch (*((*buf) + 1)) {
+@@ -680,7 +725,14 @@ void DG_ReadInput(void)
  	newt.c_cc[VTIME] = 0;
  	CALL(tcsetattr(STDIN_FILENO, TCSANOW, &newt), "DG_DrawFrame: tcsetattr error %d");
  
@@ -298,11 +321,87 @@ index 9791935..c76a410 100644
  
  	CALL(tcsetattr(STDIN_FILENO, TCSANOW, &oldt), "DG_DrawFrame: tcsetattr error %d");
  
+@@ -700,7 +752,7 @@ void DG_ReadInput(void)
+ 
+ 	int i;
+ 	for (i = 1; i < 256; i++) {
+-		if (!memcmp(&input_buffer[i], &(struct timespec){ 0 }, sizeof(struct timespec)))
++		if (input_buffer[i].tv_sec == 0 && input_buffer[i].tv_nsec == 0)
+ 			continue;
+ 
+ 		/* depressed events */
+@@ -711,8 +763,7 @@ void DG_ReadInput(void)
+ 		}
+ 
+ 		/* pressed events */
+-		if (!memcmp(&prev_input_buffer[i], &(struct timespec){ 0 },
+-			    sizeof(struct timespec)))
++		if (prev_input_buffer[i].tv_sec == 0 && prev_input_buffer[i].tv_nsec == 0)
+ 			*event_buf_loc++ = (struct event_buffer_t){ .key = i, .pressed = true };
+ 	}
+ 
 diff --git a/src/g_game.c b/src/g_game.c
-index 3f6f5aa..c687ef4 100644
+index 3f6f5aa..0e02be1 100644
 --- a/src/g_game.c
 +++ b/src/g_game.c
-@@ -2262,8 +2262,9 @@ bool G_CheckDemoStatus (void)
+@@ -383,9 +383,9 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
+     } 
+     else 
+     { 
+-	if (gamekeydown[key_right]) 
++	if (gamekeydown[key_right] || gamekeydown['d'] || gamekeydown['D']) 
+ 	    cmd->angleturn -= angleturn[tspeed]; 
+-	if (gamekeydown[key_left]) 
++	if (gamekeydown[key_left] || gamekeydown['a'] || gamekeydown['A']) 
+ 	    cmd->angleturn += angleturn[tspeed]; 
+ 	if (joyxmove > 0) 
+ 	    cmd->angleturn -= angleturn[tspeed]; 
+@@ -393,12 +393,12 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
+ 	    cmd->angleturn += angleturn[tspeed]; 
+     } 
+  
+-    if (gamekeydown[key_up]) 
++    if (gamekeydown[key_up] || gamekeydown['w'] || gamekeydown['W']) 
+     {
+ 	// fprintf(stderr, "up\n");
+ 	forward += forwardmove[speed]; 
+     }
+-    if (gamekeydown[key_down]) 
++    if (gamekeydown[key_down] || gamekeydown['s'] || gamekeydown['S']) 
+     {
+ 	// fprintf(stderr, "down\n");
+ 	forward -= forwardmove[speed]; 
+@@ -410,6 +410,7 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
+         forward -= forwardmove[speed]; 
+ 
+     if (gamekeydown[key_strafeleft]
++     || gamekeydown[',']
+      || joybuttons[joybstrafeleft]
+      || mousebuttons[mousebstrafeleft]
+      || joystrafemove < 0)
+@@ -418,6 +419,7 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
+     }
+ 
+     if (gamekeydown[key_straferight]
++     || gamekeydown['.']
+      || joybuttons[joybstraferight]
+      || mousebuttons[mousebstraferight]
+      || joystrafemove > 0)
+@@ -428,11 +430,11 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
+     // buttons
+     cmd->chatchar = HU_dequeueChatChar(); 
+  
+-    if (gamekeydown[key_fire] || mousebuttons[mousebfire] 
++    if (gamekeydown[key_fire] || gamekeydown[' '] || mousebuttons[mousebfire] 
+ 	|| joybuttons[joybfire]) 
+ 	cmd->buttons |= BT_ATTACK; 
+  
+-    if (gamekeydown[key_use]
++    if (gamekeydown[key_use] || gamekeydown['e'] || gamekeydown['E'] || gamekeydown[KEY_ENTER]
+      || joybuttons[joybuse]
+      || mousebuttons[mousebuse])
+     { 
+@@ -2262,8 +2264,9 @@ bool G_CheckDemoStatus (void)
          timingdemo = false;
          demoplayback = false;
  
@@ -314,6 +413,18 @@ index 3f6f5aa..c687ef4 100644
      } 
  	 
      if (demoplayback) 
+diff --git a/src/i_input.c b/src/i_input.c
+index e35f2a1..ad904b4 100644
+--- a/src/i_input.c
++++ b/src/i_input.c
+@@ -321,7 +321,6 @@ void I_GetEvent(void)
+             {
+                 D_PostEvent(&event);
+             }
+-            break;
+         }
+     }
+ 
 diff --git a/src/i_system.c b/src/i_system.c
 index eba110d..80dee40 100644
 --- a/src/i_system.c
@@ -416,3 +527,92 @@ index ebdae4d..9328a91 100644
  
  	DG_DrawFrame();
  }
+diff --git a/src/m_controls.c b/src/m_controls.c
+index f0ffa01..86d51a3 100644
+--- a/src/m_controls.c
++++ b/src/m_controls.c
+@@ -30,12 +30,12 @@ int key_right = KEY_RIGHTARROW;
+ int key_left = KEY_LEFTARROW;
+ int key_up = KEY_UPARROW;
+ int key_down = KEY_DOWNARROW; 
+-int key_strafeleft = KEY_STRAFE_L;
+-int key_straferight = KEY_STRAFE_R;
+-int key_fire = KEY_FIRE;
+-int key_use = KEY_USE;
++int key_strafeleft = ',';
++int key_straferight = '.';
++int key_fire = ' ';
++int key_use = 'e';
+ int key_strafe = KEY_RALT;
+-int key_speed = KEY_RSHIFT; 
++int key_speed = ']'; 
+ 
+ // 
+ // Heretic keyboard controls
+diff --git a/src/m_menu.c b/src/m_menu.c
+index d43ba48..a5fad7f 100644
+--- a/src/m_menu.c
++++ b/src/m_menu.c
+@@ -1754,7 +1754,7 @@ bool M_Responder (event_t* ev)
+     // Pop-up menu?
+     if (!menuactive)
+     {
+-	if (key == key_menu_activate)
++	if (key == key_menu_activate || key == KEY_ESCAPE)
+ 	{
+ 	    M_StartControlPanel ();
+ 	    S_StartSound(NULL,sfx_swtchn);
+@@ -1765,7 +1765,7 @@ bool M_Responder (event_t* ev)
+ 
+     // Keys usable within menu
+ 
+-    if (key == key_menu_down)
++    if (key == key_menu_down || key == 's' || key == 'S')
+     {
+         // Move down to next item
+ 
+@@ -1779,7 +1779,7 @@ bool M_Responder (event_t* ev)
+ 
+ 	return true;
+     }
+-    else if (key == key_menu_up)
++    else if (key == key_menu_up || key == 'w' || key == 'W')
+     {
+         // Move back up to previous item
+ 
+@@ -1793,7 +1793,7 @@ bool M_Responder (event_t* ev)
+ 
+ 	return true;
+     }
+-    else if (key == key_menu_left)
++    else if (key == key_menu_left || key == 'a' || key == 'A')
+     {
+         // Slide slider left
+ 
+@@ -1805,7 +1805,7 @@ bool M_Responder (event_t* ev)
+ 	}
+ 	return true;
+     }
+-    else if (key == key_menu_right)
++    else if (key == key_menu_right || key == 'd' || key == 'D')
+     {
+         // Slide slider right
+ 
+@@ -1817,7 +1817,7 @@ bool M_Responder (event_t* ev)
+ 	}
+ 	return true;
+     }
+-    else if (key == key_menu_forward)
++    else if (key == key_menu_forward || key == KEY_ENTER || key == ' ' || key == '\r' || key == '\n')
+     {
+         // Activate menu item
+ 
+@@ -1838,7 +1838,7 @@ bool M_Responder (event_t* ev)
+ 	}
+ 	return true;
+     }
+-    else if (key == key_menu_activate)
++    else if (key == key_menu_activate || key == KEY_ESCAPE)
+     {
+         // Deactivate menu
+ 
