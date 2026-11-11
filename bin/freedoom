@@ -18,18 +18,18 @@ do
             WAD_NAME="freedoom1.wad"
             WAD_URL="https://raw.githubusercontent.com/redox-os/freedoom/master/freedoom1.wad"
             ;;
-        --blocks|-blocks|-b)
+        --blocks|--block|-blocks|-block|-b)
             EXTRA_ARGS="$EXTRA_ARGS -blocks"
             ;;
         --help|-h)
-            echo "Usage: freedoom [--phase1 | --phase2] [--blocks] [doom options...]"
+            echo "Usage: freedoom [--phase1 | --phase2] [--block | --blocks] [doom options...]"
             echo ""
             echo "Downloads Freedoom into /usr/share/games/doom/ if not already cached, then launches doom."
             echo ""
             echo "Options:"
             echo "  -1, --phase1, --freedoom1   Launch Freedoom: Phase 1 (default)"
             echo "  -2, --phase2, --freedoom2   Launch Freedoom: Phase 2"
-            echo "  -b, --blocks                Render pure colour half-blocks (2x pixel density)"
+            echo "  -b, --block, --blocks       Render pure colour half-blocks (2x pixel density)"
             echo "  -h, --help                  Show this help message"
             return 0
             ;;

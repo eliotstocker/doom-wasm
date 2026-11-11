@@ -40,7 +40,7 @@ doom -blocks -nosound
 
 | Flag | Description |
 | --- | --- |
-| `-blocks`, `--blocks`, `-chars color` | Render pure colour Unicode half-blocks (`▀` with 24-bit fg + bg colours) for 2x pixel density instead of alphanumeric ASCII characters |
+| `-block`, `-blocks`, `--block`, `--blocks`, `-chars color` | Render pure colour Unicode half-blocks (`▀` with 24-bit fg + bg colours) for 2x pixel density instead of alphanumeric ASCII characters |
 | `-chars <ascii\|color\|block\|braille>` | Choose character set (`ascii` default, `color` pure half-blocks, `block` shaded blocks, `braille` patterns) |
 | `-stretch` | Fill the entire terminal instead of preserving 16:10 aspect ratio |
 | `-scaling <n>` | Fixed resolution scale divisor (`320/n` × `200/n`) |
