@@ -66,7 +66,10 @@ if ! command -v "${WASM_OPT}" >/dev/null 2>&1; then
 fi
 
 # 3. Ensure wasi-termios-brsh is present
-WASI_TERMIOS_DIR="${DEPS_DIR}/wasi-termios-brsh"
+WASI_TERMIOS_DIR="${WASI_TERMIOS_DIR:-${DEPS_DIR}/wasi-termios-brsh}"
+if [ ! -d "${WASI_TERMIOS_DIR}/include" ] && [ -d "${ROOT_DIR}/../wasi-termios-brsh/include" ]; then
+    WASI_TERMIOS_DIR="${ROOT_DIR}/../wasi-termios-brsh"
+fi
 if [ ! -d "${WASI_TERMIOS_DIR}/include" ]; then
     echo "=== Initializing wasi-termios-brsh submodule ==="
     git -C "${ROOT_DIR}" submodule update --init --recursive
@@ -111,6 +114,7 @@ LDFLAGS=(
     -O3
     -flto
     -Wl,--export=set_terminal_size
+    -Wl,--export=get_termios_lflag
     -Wl,--lto-O3
     -lm
 )
