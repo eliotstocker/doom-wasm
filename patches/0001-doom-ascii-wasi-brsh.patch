@@ -25,10 +25,10 @@ index f067297..a2a83b1 100644
      // Generate the WAD hash table.  Speed things up a bit.
      W_GenerateHashTable();
 diff --git a/src/doomgeneric.c b/src/doomgeneric.c
-index d85beac..3621a35 100644
+index d85beac..64d12c0 100644
 --- a/src/doomgeneric.c
 +++ b/src/doomgeneric.c
-@@ -21,23 +21,133 @@
+@@ -21,23 +21,128 @@
  #include "m_argv.h"
  
  #include <stdint.h>
@@ -149,16 +149,11 @@ index d85beac..3621a35 100644
 +
 +void dg_Create()
 +{
-+	/* Query terminal size via ioctl or environment if not already set */
++	/* Query terminal size via ioctl if not already set */
 +	struct winsize ws;
 +	if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0) {
 +		DG_TermCols = ws.ws_col;
 +		DG_TermRows = ws.ws_row;
-+	} else {
-+		const char *env_c = getenv("COLUMNS");
-+		const char *env_r = getenv("LINES");
-+		if (env_c && *env_c) DG_TermCols = (unsigned int)atoi(env_c);
-+		if (env_r && *env_r) DG_TermRows = (unsigned int)atoi(env_r);
 +	}
 +	if (DG_TermCols == 0) DG_TermCols = 80;
 +	if (DG_TermRows == 0) DG_TermRows = 24;
@@ -192,7 +187,7 @@ index 249f557..046f2d8 100644
  #endif //DOOM_GENERIC
 +
 diff --git a/src/doomgeneric_ascii.c b/src/doomgeneric_ascii.c
-index 9791935..c68ea4e 100644
+index 9791935..f89bbcf 100644
 --- a/src/doomgeneric_ascii.c
 +++ b/src/doomgeneric_ascii.c
 @@ -37,6 +37,7 @@
@@ -312,7 +307,7 @@ index 9791935..c68ea4e 100644
 -	CALL(read(2, raw_input_buffer, INPUT_BUFFER_LEN - 1U) < 0, "DG_DrawFrame: read error %d");
 +	ssize_t n = read(STDIN_FILENO, raw_input_buffer, INPUT_BUFFER_LEN - 1U);
 +	if (n < 0) {
-+		if (errno != EAGAIN && errno != EWOULDBLOCK) {
++		if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
 +			I_Error("DG_DrawFrame: read error %d", errno);
 +		}
 +		n = 0;
@@ -341,7 +336,7 @@ index 9791935..c68ea4e 100644
  	}
  
 diff --git a/src/g_game.c b/src/g_game.c
-index 3f6f5aa..0e02be1 100644
+index 3f6f5aa..e1de929 100644
 --- a/src/g_game.c
 +++ b/src/g_game.c
 @@ -383,9 +383,9 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
@@ -371,37 +366,16 @@ index 3f6f5aa..0e02be1 100644
      {
  	// fprintf(stderr, "down\n");
  	forward -= forwardmove[speed]; 
-@@ -410,6 +410,7 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
-         forward -= forwardmove[speed]; 
- 
-     if (gamekeydown[key_strafeleft]
-+     || gamekeydown[',']
-      || joybuttons[joybstrafeleft]
-      || mousebuttons[mousebstrafeleft]
-      || joystrafemove < 0)
-@@ -418,6 +419,7 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
-     }
- 
-     if (gamekeydown[key_straferight]
-+     || gamekeydown['.']
-      || joybuttons[joybstraferight]
-      || mousebuttons[mousebstraferight]
-      || joystrafemove > 0)
-@@ -428,11 +430,11 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
-     // buttons
-     cmd->chatchar = HU_dequeueChatChar(); 
-  
--    if (gamekeydown[key_fire] || mousebuttons[mousebfire] 
-+    if (gamekeydown[key_fire] || gamekeydown[' '] || mousebuttons[mousebfire] 
+@@ -432,7 +432,7 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
  	|| joybuttons[joybfire]) 
  	cmd->buttons |= BT_ATTACK; 
   
 -    if (gamekeydown[key_use]
-+    if (gamekeydown[key_use] || gamekeydown['e'] || gamekeydown['E'] || gamekeydown[KEY_ENTER]
++    if (gamekeydown[key_use] || gamekeydown['E'] || gamekeydown[KEY_ENTER]
       || joybuttons[joybuse]
       || mousebuttons[mousebuse])
      { 
-@@ -2262,8 +2264,9 @@ bool G_CheckDemoStatus (void)
+@@ -2262,8 +2262,9 @@ bool G_CheckDemoStatus (void)
          timingdemo = false;
          demoplayback = false;
  
@@ -550,18 +524,9 @@ index f0ffa01..86d51a3 100644
  // 
  // Heretic keyboard controls
 diff --git a/src/m_menu.c b/src/m_menu.c
-index d43ba48..a5fad7f 100644
+index d43ba48..5ee9064 100644
 --- a/src/m_menu.c
 +++ b/src/m_menu.c
-@@ -1754,7 +1754,7 @@ bool M_Responder (event_t* ev)
-     // Pop-up menu?
-     if (!menuactive)
-     {
--	if (key == key_menu_activate)
-+	if (key == key_menu_activate || key == KEY_ESCAPE)
- 	{
- 	    M_StartControlPanel ();
- 	    S_StartSound(NULL,sfx_swtchn);
 @@ -1765,7 +1765,7 @@ bool M_Responder (event_t* ev)
  
      // Keys usable within menu
@@ -603,16 +568,7 @@ index d43ba48..a5fad7f 100644
  	return true;
      }
 -    else if (key == key_menu_forward)
-+    else if (key == key_menu_forward || key == KEY_ENTER || key == ' ' || key == '\r' || key == '\n')
++    else if (key == key_menu_forward || key == ' ')
      {
          // Activate menu item
- 
-@@ -1838,7 +1838,7 @@ bool M_Responder (event_t* ev)
- 	}
- 	return true;
-     }
--    else if (key == key_menu_activate)
-+    else if (key == key_menu_activate || key == KEY_ESCAPE)
-     {
-         // Deactivate menu
  

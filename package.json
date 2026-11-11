@@ -1,6 +1,6 @@
 {
   "name": "doom-wasm",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "interactive": true,
   "description": "Classic Doom (doom-ascii) compiled to WebAssembly (wasm32-wasip1) with Binaryen Asyncify and wasi-termios-brsh for brsh and WASI environments",
   "main": "./index.js",
