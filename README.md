@@ -4,7 +4,7 @@ Classic Doom ([doom-ascii](https://github.com/wojciech-graj/doom-ascii) 0.3.2) c
 
 ## Features
 
-- **Truecolor ANSI Text Rendering**: Renders full 24-bit RGB ANSI frames directly to `stdout` at ~70 FPS.
+- **Truecolor ANSI Text & Half-Block Rendering**: Renders full 24-bit RGB ANSI frames directly to `stdout` at ~70 FPS in classic ASCII or 2x-density pure colour half-blocks (`-blocks` / `-chars color`).
 - **Binaryen Asyncify Event Loop**: Non-blocking real-time game loop instrumenting `clock_nanosleep`, `poll_oneoff`, and `fd_read` — runs smoothly without locking up browser or Node.js JavaScript threads.
 - **Dynamic Terminal Sizing**: Integrates with [wasi-termios-brsh](https://github.com/eliotstocker/wasi-termios-brsh) to adapt rendering to current terminal dimensions (`TIOCGWINSZ` and `set_terminal_size`).
 - **Standard `wasi_snapshot_preview1` ABI**: Zero non-standard host imports; works in `brsh` or any standard WASI runtime supporting Asyncify.
@@ -24,13 +24,26 @@ wbt install doom
 
 # Option 1: Launch Freedoom automatically (downloads freedoom1.wad to /usr/share/games/doom/ if missing)
 freedoom
+# Launch with pure colour half-blocks (2x pixel density) instead of ASCII characters
+freedoom --blocks
 # or Freedoom: Phase 2
 freedoom --phase2
 
 # Option 2: Download original shareware IWAD manually and run `doom`
 curl -o doom1.wad https://raw.githubusercontent.com/wasm3/pywasm3-doom-demo/main/doom1.wad
 doom -nosound
+# or with pure colour half-blocks:
+doom -blocks -nosound
 ```
+
+### Display Options
+
+| Flag | Description |
+| --- | --- |
+| `-blocks`, `--blocks`, `-chars color` | Render pure colour Unicode half-blocks (`▀` with 24-bit fg + bg colours) for 2x pixel density instead of alphanumeric ASCII characters |
+| `-chars <ascii\|color\|block\|braille>` | Choose character set (`ascii` default, `color` pure half-blocks, `block` shaded blocks, `braille` patterns) |
+| `-stretch` | Fill the entire terminal instead of preserving 16:10 aspect ratio |
+| `-scaling <n>` | Fixed resolution scale divisor (`320/n` × `200/n`) |
 
 ### Running the Timedemo Benchmark
 

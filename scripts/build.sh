@@ -16,10 +16,24 @@ DOOM_SRC="${BUILD_DIR}/doom-ascii"
 mkdir -p "${BUILD_DIR}" "${DIST_DIR}"
 
 # 1. Detect or provision wasi-sdk
+WASI_SDK_MAJOR="25"
 WASI_SDK_VERSION="25.0"
-WASI_SDK_DIR="${WASI_SDK_PATH:-${BUILD_DIR}/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux}"
-if [ ! -d "${WASI_SDK_DIR}" ] && [ -d "${ROOT_DIR}/../nano-wasm/build/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux" ]; then
-    WASI_SDK_DIR="${ROOT_DIR}/../nano-wasm/build/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux"
+RAW_ARCH="$(uname -m)"
+RAW_OS="$(uname -s)"
+if [ "${RAW_ARCH}" = "x86_64" ]; then
+    HOST_ARCH="x86_64"
+else
+    HOST_ARCH="arm64"
+fi
+if [ "${RAW_OS}" = "Darwin" ]; then
+    HOST_OS="macos"
+else
+    HOST_OS="linux"
+fi
+
+WASI_SDK_DIR="${WASI_SDK_PATH:-${BUILD_DIR}/wasi-sdk-${WASI_SDK_VERSION}-${HOST_ARCH}-${HOST_OS}}"
+if [ ! -d "${WASI_SDK_DIR}" ] && [ -d "${ROOT_DIR}/../nano-wasm/build/wasi-sdk-${WASI_SDK_VERSION}-${HOST_ARCH}-${HOST_OS}" ]; then
+    WASI_SDK_DIR="${ROOT_DIR}/../nano-wasm/build/wasi-sdk-${WASI_SDK_VERSION}-${HOST_ARCH}-${HOST_OS}"
 fi
 if [ ! -d "${WASI_SDK_DIR}" ] && [ -d "/opt/wasi-sdk" ]; then
     WASI_SDK_DIR="/opt/wasi-sdk"
@@ -27,9 +41,7 @@ fi
 
 if [ ! -d "${WASI_SDK_DIR}" ]; then
     echo "=== Downloading wasi-sdk ${WASI_SDK_VERSION} ==="
-    ARCH="$(uname -m)"
-    OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-    URL="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}-${ARCH}-${OS}.tar.gz"
+    URL="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_MAJOR}/wasi-sdk-${WASI_SDK_VERSION}-${HOST_ARCH}-${HOST_OS}.tar.gz"
     curl -fsSL "${URL}" | tar -xz -C "${BUILD_DIR}"
 fi
 
@@ -48,9 +60,7 @@ if ! command -v "${WASM_OPT}" >/dev/null 2>&1; then
         WASM_OPT="wasm-opt"
     else
         echo "=== Downloading Binaryen version_${BINARYEN_VERSION} ==="
-        ARCH="$(uname -m)"
-        OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-        URL="https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-${ARCH}-${OS}.tar.gz"
+        URL="https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-${HOST_ARCH}-${HOST_OS}.tar.gz"
         curl -fsSL "${URL}" | tar -xz -C "${BUILD_DIR}"
     fi
 fi
