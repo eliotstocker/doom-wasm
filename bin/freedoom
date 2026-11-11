@@ -5,10 +5,21 @@
 WAD_DIR="/usr/share/games/doom"
 WAD_NAME="freedoom1.wad"
 WAD_URL="https://raw.githubusercontent.com/redox-os/freedoom/master/freedoom1.wad"
-EXTRA_ARGS=""
+BLOCKS_FLAG=""
+A1=""
+A2=""
+A3=""
+A4=""
+A5=""
+A6=""
+A7=""
+A8=""
+A9=""
+ARG_IDX=0
 
-for ARG in $@
+for ARG in "$@"
 do
+    FORWARD_ARG="0"
     case "$ARG" in
         --phase2|--freedoom2|-2)
             WAD_NAME="freedoom2.wad"
@@ -19,7 +30,7 @@ do
             WAD_URL="https://raw.githubusercontent.com/redox-os/freedoom/master/freedoom1.wad"
             ;;
         --blocks|--block|-blocks|-block|-b)
-            EXTRA_ARGS="$EXTRA_ARGS -blocks"
+            BLOCKS_FLAG="-blocks"
             ;;
         --help|-h)
             echo "Usage: freedoom [--phase1 | --phase2] [--block | --blocks] [doom options...]"
@@ -34,9 +45,30 @@ do
             return 0
             ;;
         *)
-            EXTRA_ARGS="$EXTRA_ARGS $ARG"
+            FORWARD_ARG="1"
             ;;
     esac
+
+    if [ "$FORWARD_ARG" = "1" ]; then
+        ARG_IDX=$((ARG_IDX + 1))
+        case "$ARG_IDX" in
+            1) A1="$ARG" ;;
+            2) A2="$ARG" ;;
+            3) A3="$ARG" ;;
+            4) A4="$ARG" ;;
+            5) A5="$ARG" ;;
+            6) A6="$ARG" ;;
+            7) A7="$ARG" ;;
+            8) A8="$ARG" ;;
+            *)
+                if [ -z "$A9" ]; then
+                    A9="$ARG"
+                else
+                    A9="$A9 $ARG"
+                fi
+                ;;
+        esac
+    fi
 done
 
 WAD_FILE="$WAD_DIR/$WAD_NAME"
@@ -52,4 +84,4 @@ if [ ! -f "$WAD_FILE" ]; then
     fi
 fi
 
-doom -iwad "$WAD_FILE" -nosound $EXTRA_ARGS
+doom -iwad "$WAD_FILE" -nosound $BLOCKS_FLAG $A1 $A2 $A3 $A4 $A5 $A6 $A7 $A8 $A9

@@ -25,7 +25,7 @@ wbt install doom
 # Option 1: Launch Freedoom automatically (downloads freedoom1.wad to /usr/share/games/doom/ if missing)
 freedoom
 # Launch with pure colour half-blocks (2x pixel density) instead of ASCII characters
-freedoom --blocks
+freedoom --blocks   # (or `freedoom --block` / `freedoom -b`)
 # or Freedoom: Phase 2
 freedoom --phase2
 
@@ -40,8 +40,9 @@ doom -blocks -nosound
 
 | Flag | Description |
 | --- | --- |
-| `-block`, `-blocks`, `--block`, `--blocks`, `-chars color` | Render pure colour Unicode half-blocks (`▀` with 24-bit fg + bg colours) for 2x pixel density instead of alphanumeric ASCII characters |
+| `-block`, `-blocks`, `--block`, `--blocks`, `-chars color` | Render pure colour Unicode half-blocks (`▀` / `▄` with 24-bit fg + bg colours) for 2x pixel density instead of alphanumeric ASCII characters |
 | `-chars <ascii\|color\|block\|braille>` | Choose character set (`ascii` default, `color` pure half-blocks, `block` shaded blocks, `braille` patterns) |
+| `-nograd` | Disable perceptual colour run-coalescing in `-blocks` mode (or character brightness gradient in text modes) |
 | `-stretch` | Fill the entire terminal instead of preserving 16:10 aspect ratio |
 | `-scaling <n>` | Fixed resolution scale divisor (`320/n` × `200/n`) |
 

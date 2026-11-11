@@ -25,10 +25,10 @@ index f067297..a2a83b1 100644
      // Generate the WAD hash table.  Speed things up a bit.
      W_GenerateHashTable();
 diff --git a/src/doomgeneric.c b/src/doomgeneric.c
-index d85beac..62eb592 100644
+index d85beac..ec034bc 100644
 --- a/src/doomgeneric.c
 +++ b/src/doomgeneric.c
-@@ -21,22 +21,133 @@
+@@ -21,22 +21,137 @@
  #include "m_argv.h"
  
  #include <stdint.h>
@@ -112,6 +112,7 @@ index d85beac..62eb592 100644
 +void DG_SetTerminalSize(int cols, int rows)
 +{
 +	if (cols <= 0 || rows <= 0) return;
++	int dims_changed = ((unsigned int)cols != DG_TermCols || (unsigned int)rows != DG_TermRows);
 +	DG_TermCols = (unsigned int)cols;
 +	DG_TermRows = (unsigned int)rows;
 +
@@ -126,6 +127,10 @@ index d85beac..62eb592 100644
 +	DG_ComputeResolution(cols, rows, &new_w, &new_h);
 +
 +	if (new_w == DOOMGENERIC_RESX && new_h == DOOMGENERIC_RESY) {
++		if (dims_changed) {
++			DG_ResizeOutputBuffer(new_w, new_h);
++			(void)write(STDOUT_FILENO, "\033[2J\033[1;1H", 10);
++		}
 +		return;
 +	}
 +
@@ -141,8 +146,7 @@ index d85beac..62eb592 100644
 +	DG_ResizeOutputBuffer(new_w, new_h);
 +
 +	/* Clear terminal screen to remove borders from previous resolution */
-+	fputs("\033[2J\033[1;1H", stdout);
-+	fflush(stdout);
++	(void)write(STDOUT_FILENO, "\033[2J\033[1;1H", 10);
 +}
 +
 +#if defined(__wasm__)
@@ -193,7 +197,7 @@ index 249f557..5dd9c1b 100644
  #endif //DOOM_GENERIC
 +
 diff --git a/src/doomgeneric_ascii.c b/src/doomgeneric_ascii.c
-index 9791935..319d782 100644
+index 9791935..f143266 100644
 --- a/src/doomgeneric_ascii.c
 +++ b/src/doomgeneric_ascii.c
 @@ -37,6 +37,7 @@
@@ -204,7 +208,7 @@ index 9791935..319d782 100644
  #endif
  
  #ifdef OS_WINDOWS
-@@ -170,7 +171,7 @@ struct event_buffer_t {
+@@ -170,10 +171,13 @@ struct event_buffer_t {
  	unsigned char key;
  };
  
@@ -213,7 +217,125 @@ index 9791935..319d782 100644
  
  static char *output_buffer;
  static size_t output_buffer_size;
-@@ -195,6 +196,39 @@ static int64_t sub_timespec_ms(
++static uint64_t *prev_cells;
++static size_t prev_cells_len;
++static bool prev_cells_valid;
+ static struct timespec ts_init;
+ 
+ static struct timespec input_buffer[256] = { 0 };
+@@ -188,6 +192,111 @@ static bool erase_enabled;
+ static bool gamma_correct_enabled;
+ static unsigned keypress_smoothing_ms = 42;
+ 
++static inline char *put_u8(char *buf, unsigned int v)
++{
++	if (v >= 100U) {
++		*buf++ = (char)('0' + v / 100U);
++		v %= 100U;
++		*buf++ = (char)('0' + v / 10U);
++		*buf++ = (char)('0' + v % 10U);
++	} else if (v >= 10U) {
++		*buf++ = (char)('0' + v / 10U);
++		*buf++ = (char)('0' + v % 10U);
++	} else {
++		*buf++ = (char)('0' + v);
++	}
++	return buf;
++}
++
++static inline char *put_uint(char *buf, unsigned int v)
++{
++	char tmp[12];
++	int n = 0;
++	do {
++		tmp[n++] = (char)('0' + (v % 10U));
++		v /= 10U;
++	} while (v > 0U);
++	while (n > 0) {
++		*buf++ = tmp[--n];
++	}
++	return buf;
++}
++
++static inline char *put_fg_rgb(char *buf, struct color_t c)
++{
++	BUF_PUTS(buf, "\033[38;2;");
++	buf = put_u8(buf, c.r);
++	*buf++ = ';';
++	buf = put_u8(buf, c.g);
++	*buf++ = ';';
++	buf = put_u8(buf, c.b);
++	*buf++ = 'm';
++	return buf;
++}
++
++static inline char *put_bg_rgb(char *buf, struct color_t c)
++{
++	BUF_PUTS(buf, "\033[48;2;");
++	buf = put_u8(buf, c.r);
++	*buf++ = ';';
++	buf = put_u8(buf, c.g);
++	*buf++ = ';';
++	buf = put_u8(buf, c.b);
++	*buf++ = 'm';
++	return buf;
++}
++
++static inline char *put_fg_bg_rgb(char *buf, struct color_t fg, struct color_t bg)
++{
++	BUF_PUTS(buf, "\033[38;2;");
++	buf = put_u8(buf, fg.r);
++	*buf++ = ';';
++	buf = put_u8(buf, fg.g);
++	*buf++ = ';';
++	buf = put_u8(buf, fg.b);
++	BUF_PUTS(buf, ";48;2;");
++	buf = put_u8(buf, bg.r);
++	*buf++ = ';';
++	buf = put_u8(buf, bg.g);
++	*buf++ = ';';
++	buf = put_u8(buf, bg.b);
++	*buf++ = 'm';
++	return buf;
++}
++
++static inline bool rgb_close(struct color_t a, struct color_t b, int tol)
++{
++	int dr = (int)a.r - (int)b.r;
++	if (dr < -tol || dr > tol) return false;
++	int dg = (int)a.g - (int)b.g;
++	if (dg < -tol || dg > tol) return false;
++	int db = (int)a.b - (int)b.b;
++	return db >= -tol && db <= tol;
++}
++
++static void write_all_stdout(const char *data, size_t len)
++{
++	if (len == 0) return;
++#ifdef OS_WINDOWS
++	fwrite(data, 1, len, stdout);
++	fflush(stdout);
++#else
++	const char *p = data;
++	size_t rem = len;
++	while (rem > 0) {
++		ssize_t n = write(STDOUT_FILENO, p, rem);
++		if (n > 0) {
++			p += (size_t)n;
++			rem -= (size_t)n;
++		} else if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
++			continue;
++		} else {
++			break;
++		}
++	}
++#endif
++}
++
+ static int64_t sub_timespec_ms(
+ 	const struct timespec *const time1, const struct timespec *const time0)
+ {
+@@ -195,6 +304,39 @@ static int64_t sub_timespec_ms(
  		+ (time1->tv_nsec - time0->tv_nsec) / 1000000L;
  }
  
@@ -253,7 +375,7 @@ index 9791935..319d782 100644
  void DG_AtExit(void)
  {
  	if (color_enabled || bold_enabled)
-@@ -251,16 +285,26 @@ void DG_Init(void)
+@@ -251,16 +393,26 @@ void DG_Init(void)
  	erase_enabled = M_CheckParm("-erase") > 0;
  	gamma_correct_enabled = M_CheckParm("-fixgamma") > 0;
  
@@ -284,7 +406,7 @@ index 9791935..319d782 100644
  		}
  	}
  
-@@ -271,30 +315,26 @@ void DG_Init(void)
+@@ -271,37 +423,49 @@ void DG_Init(void)
  	if (character_set != ASCII) {
  #ifdef OS_WINDOWS
  		WINDOWS_CALL(!SetConsoleOutputCP(CP_UTF8), "DG_Init: %s");
@@ -312,6 +434,12 @@ index 9791935..319d782 100644
 +	output_buffer_size = DG_CalcOutputBufferSize(DOOMGENERIC_RESX, DOOMGENERIC_RESY);
  	output_buffer = malloc(output_buffer_size);
  
++	if (character_set == HALFBLOCK) {
++		prev_cells_len = (size_t)DOOMGENERIC_RESX * (size_t)((DOOMGENERIC_RESY + 1U) / 2U);
++		prev_cells = malloc(prev_cells_len * sizeof(uint64_t));
++		prev_cells_valid = false;
++	}
++
  	CALL(clock_gettime(CLK, &ts_init), "DG_Init: clock_gettime error %d");
  }
  
@@ -322,93 +450,108 @@ index 9791935..319d782 100644
 +	if (new_buf) {
 +		output_buffer = (char *)new_buf;
 +	}
++	if (character_set == HALFBLOCK) {
++		size_t needed = (size_t)w * (size_t)((h + 1U) / 2U);
++		void *new_prev = realloc(prev_cells, needed * sizeof(uint64_t));
++		if (new_prev) {
++			prev_cells = (uint64_t *)new_prev;
++			prev_cells_len = needed;
++		}
++		prev_cells_valid = false;
++	}
 +}
 +
  void DG_DrawFrame(void)
  {
  	/* Clear screen if first frame */
-@@ -304,6 +344,8 @@ void DG_DrawFrame(void)
- 		CALL_STDOUT(fputs("\033[1;1H\033[2J", stdout), "DG_DrawFrame: fputs error %d");
+ 	static bool first_frame = true;
+ 	if (first_frame) {
+ 		first_frame = false;
+-		CALL_STDOUT(fputs("\033[1;1H\033[2J", stdout), "DG_DrawFrame: fputs error %d");
++		prev_cells_valid = false;
++		write_all_stdout("\033[1;1H\033[2J", 10);
  	}
  
-+
-+
  #ifdef DG_DEMO
- 	struct timespec now;
- 	CALL(clock_gettime(CLK, &now), "DG_DrawFrame: clock_gettime error %d");
-@@ -318,89 +360,260 @@ void DG_DrawFrame(void)
+@@ -318,12 +482,203 @@ void DG_DrawFrame(void)
  	struct color_t *pixel = (struct color_t *)DG_ScreenBuffer;
  	char *buf = output_buffer;
  
+-	/* fill output buffer */
+-	BUF_PUTS(buf, "\033[;H"); /* move cursor to top left corner */
 +	unsigned int out_cols = (character_set == HALFBLOCK) ? DOOMGENERIC_RESX : (DOOMGENERIC_RESX * 2U);
 +	unsigned int out_rows = (character_set == HALFBLOCK) ? ((DOOMGENERIC_RESY + 1U) / 2U) : DOOMGENERIC_RESY;
 +	unsigned int pad_left = (DG_TermCols > out_cols) ? (DG_TermCols - out_cols) / 2U : 0U;
 +	unsigned int pad_top = (DG_TermRows > out_rows) ? (DG_TermRows - out_rows) / 2U : 0U;
 +
- 	/* fill output buffer */
--	BUF_PUTS(buf, "\033[;H"); /* move cursor to top left corner */
-+	if (pad_top > 0 || pad_left > 0) {
-+		char pos_buf[32];
-+		int pos_len = snprintf(pos_buf, sizeof(pos_buf), "\033[%u;%uH", 1 + pad_top, 1 + pad_left);
-+		if (pos_len > 0) {
-+			BUF_MEMCPY(buf, pos_buf, (size_t)pos_len);
-+		}
-+	} else {
-+		BUF_PUTS(buf, "\033[;H"); /* move cursor to top left corner */
-+	}
-+
- 	if (erase_enabled)
- 		BUF_PUTS(buf, "\033[2J");
--	if (bold_enabled)
-+	if (bold_enabled && character_set != HALFBLOCK)
- 		BUF_PUTS(buf, "\033[1m");
--	for (row = 0; row < DOOMGENERIC_RESY; row++) {
--		for (col = 0; col < DOOMGENERIC_RESX; col++) {
--			if (gamma_correct_enabled) {
--				pixel->r = byte_sqrt[pixel->r];
--				pixel->g = byte_sqrt[pixel->g];
--				pixel->b = byte_sqrt[pixel->b];
--			}
- 
--			if (color_enabled && (color ^ *(uint32_t *)pixel) & 0x00FFFFFF) {
--				BUF_PUTS(buf, "\033[38;2;");
--				BUF_ITOA(buf, pixel->r);
--				BUF_PUTCHAR(buf, ';');
--				BUF_ITOA(buf, pixel->g);
--				BUF_PUTCHAR(buf, ';');
--				BUF_ITOA(buf, pixel->b);
--				BUF_PUTCHAR(buf, 'm');
--				color = *(uint32_t *)pixel;
--			}
 +	if (character_set == HALFBLOCK) {
++		if (erase_enabled) {
++			BUF_PUTS(buf, "\033[2J");
++			prev_cells_valid = false;
++		}
++
++		const bool use_delta = (prev_cells != NULL && prev_cells_valid && !erase_enabled);
++		/* Perceptual coalescing merges near-identical texels into single DOM spans;
++		 * -nograd disables coalescing for exact 0-tolerance per-pixel output. */
++		const int vert_tol = gradient_enabled ? 10 : 0;
++		const int run_tol = gradient_enabled ? 10 : 0;
++
 +		for (row = 0; row < out_rows; row++) {
-+			uint32_t fg_color = 0xFFFFFFFFU;
-+			uint32_t bg_color = 0xFFFFFFFFU;
 +			struct color_t *top_row = pixel + (size_t)(row * 2U) * DOOMGENERIC_RESX;
 +			struct color_t *bot_row = (row * 2U + 1U < DOOMGENERIC_RESY)
 +				? (top_row + DOOMGENERIC_RESX)
 +				: NULL;
++			uint64_t *prev_row = prev_cells ? (prev_cells + (size_t)row * DOOMGENERIC_RESX) : NULL;
 +
-+			for (col = 0; col < DOOMGENERIC_RESX; col++) {
++			unsigned int first_col = 0;
++			unsigned int last_col = DOOMGENERIC_RESX - 1U;
++
++			if (use_delta && prev_row) {
++				first_col = DOOMGENERIC_RESX;
++				for (col = 0; col < DOOMGENERIC_RESX; col++) {
++					uint32_t t_raw = (*(const uint32_t *)&top_row[col]) & 0x00FFFFFFU;
++					uint32_t b_raw = bot_row ? ((*(const uint32_t *)&bot_row[col]) & 0x00FFFFFFU) : 0xFFFFFFFFU;
++					uint64_t packed = ((uint64_t)t_raw << 32) | (uint64_t)b_raw;
++					if (packed != prev_row[col]) {
++						if (first_col == DOOMGENERIC_RESX) {
++							first_col = col;
++						}
++						last_col = col;
++					}
++				}
++				if (first_col == DOOMGENERIC_RESX) {
++					continue; /* Entire terminal row unchanged! */
++				}
++			}
++
++			/* Position cursor at (1 + pad_top + row, 1 + pad_left + first_col) */
++			BUF_PUTS(buf, "\033[");
++			buf = put_uint(buf, 1U + pad_top + row);
++			*buf++ = ';';
++			buf = put_uint(buf, 1U + pad_left + first_col);
++			*buf++ = 'H';
++
++			bool fg_valid = false;
++			bool bg_valid = false;
++			bool bg_is_default = false;
++			struct color_t cur_fg = { 0 };
++			struct color_t cur_bg = { 0 };
++
++			for (col = first_col; col <= last_col; col++) {
++				if (prev_row) {
++					uint32_t t_raw = (*(const uint32_t *)&top_row[col]) & 0x00FFFFFFU;
++					uint32_t b_raw = bot_row ? ((*(const uint32_t *)&bot_row[col]) & 0x00FFFFFFU) : 0xFFFFFFFFU;
++					prev_row[col] = ((uint64_t)t_raw << 32) | (uint64_t)b_raw;
++				}
++
 +				struct color_t top_px = top_row[col];
 +				if (gamma_correct_enabled) {
 +					top_px.r = byte_sqrt[top_px.r];
 +					top_px.g = byte_sqrt[top_px.g];
 +					top_px.b = byte_sqrt[top_px.b];
 +				}
- 
--			switch (character_set) {
--			case ASCII:
--				if (gradient_enabled) {
--					const char v_char = grad[(pixel->r + pixel->g + pixel->b)
--						* static_strlen(grad) / RGB_SUM_MAX];
--					BUF_PUTCHAR(buf, v_char);
--					BUF_PUTCHAR(buf, v_char);
-+				if (color_enabled) {
-+					uint32_t top_rgb = ((uint32_t)top_px.r << 16)
-+						| ((uint32_t)top_px.g << 8)
-+						| (uint32_t)top_px.b;
 +
++				if (color_enabled) {
 +					if (bot_row) {
 +						struct color_t bot_px = bot_row[col];
 +						if (gamma_correct_enabled) {
@@ -416,92 +559,73 @@ index 9791935..319d782 100644
 +							bot_px.g = byte_sqrt[bot_px.g];
 +							bot_px.b = byte_sqrt[bot_px.b];
 +						}
-+						uint32_t bot_rgb = ((uint32_t)bot_px.r << 16)
-+							| ((uint32_t)bot_px.g << 8)
-+							| (uint32_t)bot_px.b;
 +
-+						if (top_rgb == bot_rgb) {
-+							if (bot_rgb != bg_color) {
-+								BUF_PUTS(buf, "\033[48;2;");
-+								BUF_ITOA(buf, bot_px.r);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, bot_px.g);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, bot_px.b);
-+								BUF_PUTCHAR(buf, 'm');
-+								bg_color = bot_rgb;
++						if (rgb_close(top_px, bot_px, vert_tol)) {
++							struct color_t mid = {
++								.r = (uint8_t)(((unsigned int)top_px.r + bot_px.r) >> 1),
++								.g = (uint8_t)(((unsigned int)top_px.g + bot_px.g) >> 1),
++								.b = (uint8_t)(((unsigned int)top_px.b + bot_px.b) >> 1),
++							};
++							if (!bg_valid || bg_is_default || !rgb_close(mid, cur_bg, run_tol)) {
++								buf = put_bg_rgb(buf, mid);
++								cur_bg = mid;
++								bg_valid = true;
++								bg_is_default = false;
 +							}
-+							BUF_PUTCHAR(buf, ' ');
++							*buf++ = ' ';
++						} else if (fg_valid && bg_valid && !bg_is_default
++							&& rgb_close(top_px, cur_fg, run_tol)
++							&& rgb_close(bot_px, cur_bg, run_tol)) {
++							BUF_PUTS(buf, "\u2580");
++						} else if (fg_valid && bg_valid && !bg_is_default
++							&& rgb_close(top_px, cur_bg, run_tol)
++							&& rgb_close(bot_px, cur_fg, run_tol)) {
++							BUF_PUTS(buf, "\u2584");
++						} else if (fg_valid && rgb_close(top_px, cur_fg, run_tol)) {
++							buf = put_bg_rgb(buf, bot_px);
++							cur_bg = bot_px;
++							bg_valid = true;
++							bg_is_default = false;
++							BUF_PUTS(buf, "\u2580");
++						} else if (bg_valid && !bg_is_default && rgb_close(bot_px, cur_bg, run_tol)) {
++							buf = put_fg_rgb(buf, top_px);
++							cur_fg = top_px;
++							fg_valid = true;
++							BUF_PUTS(buf, "\u2580");
++						} else if (bg_valid && !bg_is_default && rgb_close(top_px, cur_bg, run_tol)) {
++							buf = put_fg_rgb(buf, bot_px);
++							cur_fg = bot_px;
++							fg_valid = true;
++							BUF_PUTS(buf, "\u2584");
++						} else if (fg_valid && rgb_close(bot_px, cur_fg, run_tol)) {
++							buf = put_bg_rgb(buf, top_px);
++							cur_bg = top_px;
++							bg_valid = true;
++							bg_is_default = false;
++							BUF_PUTS(buf, "\u2584");
 +						} else {
-+							bool fg_diff = (top_rgb != fg_color);
-+							bool bg_diff = (bot_rgb != bg_color);
-+							if (fg_diff && bg_diff) {
-+								BUF_PUTS(buf, "\033[38;2;");
-+								BUF_ITOA(buf, top_px.r);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, top_px.g);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, top_px.b);
-+								BUF_PUTS(buf, ";48;2;");
-+								BUF_ITOA(buf, bot_px.r);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, bot_px.g);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, bot_px.b);
-+								BUF_PUTCHAR(buf, 'm');
-+								fg_color = top_rgb;
-+								bg_color = bot_rgb;
-+							} else if (fg_diff) {
-+								BUF_PUTS(buf, "\033[38;2;");
-+								BUF_ITOA(buf, top_px.r);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, top_px.g);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, top_px.b);
-+								BUF_PUTCHAR(buf, 'm');
-+								fg_color = top_rgb;
-+							} else if (bg_diff) {
-+								BUF_PUTS(buf, "\033[48;2;");
-+								BUF_ITOA(buf, bot_px.r);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, bot_px.g);
-+								BUF_PUTCHAR(buf, ';');
-+								BUF_ITOA(buf, bot_px.b);
-+								BUF_PUTCHAR(buf, 'm');
-+								bg_color = bot_rgb;
-+							}
++							buf = put_fg_bg_rgb(buf, top_px, bot_px);
++							cur_fg = top_px;
++							cur_bg = bot_px;
++							fg_valid = true;
++							bg_valid = true;
++							bg_is_default = false;
 +							BUF_PUTS(buf, "\u2580");
 +						}
 +					} else {
-+						if (top_rgb != fg_color) {
-+							BUF_PUTS(buf, "\033[38;2;");
-+							BUF_ITOA(buf, top_px.r);
-+							BUF_PUTCHAR(buf, ';');
-+							BUF_ITOA(buf, top_px.g);
-+							BUF_PUTCHAR(buf, ';');
-+							BUF_ITOA(buf, top_px.b);
-+							BUF_PUTCHAR(buf, 'm');
-+							fg_color = top_rgb;
++						if (!fg_valid || !rgb_close(top_px, cur_fg, run_tol)) {
++							buf = put_fg_rgb(buf, top_px);
++							cur_fg = top_px;
++							fg_valid = true;
 +						}
-+						if (bg_color != 0xFFFFFFFEU) {
++						if (!bg_is_default) {
 +							BUF_PUTS(buf, "\033[49m");
-+							bg_color = 0xFFFFFFFEU;
++							bg_is_default = true;
++							bg_valid = false;
 +						}
 +						BUF_PUTS(buf, "\u2580");
 +					}
- 				} else {
--					BUF_PUTS(buf, "##");
--				}
--				break;
--			case BLOCK:
--				if (gradient_enabled) {
--					const size_t idx = (pixel->r + pixel->g + pixel->b)
--						* (UNICODE_GRAD_LEN + 1U) / RGB_SUM_MAX;
--					if (idx) {
--						const void *const v_char =
--							&unicode_grad[(idx - 1) * 3];
--						BUF_MEMCPY(buf, v_char, 3);
--						BUF_MEMCPY(buf, v_char, 3);
++				} else {
 +					bool top_on = (top_px.r + top_px.g + top_px.b) >= (RGB_SUM_MAX / 2U);
 +					bool bot_on = false;
 +					if (bot_row) {
@@ -519,8 +643,7 @@ index 9791935..319d782 100644
 +						BUF_PUTS(buf, "\u2580");
 +					} else if (bot_on) {
 +						BUF_PUTS(buf, "\u2584");
- 					} else {
--						BUF_PUTS(buf, "  ");
++					} else {
 +						BUF_PUTCHAR(buf, ' ');
 +					}
 +				}
@@ -528,138 +651,84 @@ index 9791935..319d782 100644
 +
 +			if (color_enabled)
 +				BUF_PUTS(buf, "\033[0m");
-+
-+			if (row + 1 < out_rows) {
-+				if (pad_left > 0) {
-+					char next_pos[32];
-+					int next_len = snprintf(next_pos, sizeof(next_pos), "\033[%u;%uH", 1 + pad_top + row + 1, 1 + pad_left);
-+					if (next_len > 0) {
-+						BUF_MEMCPY(buf, next_pos, (size_t)next_len);
- 					}
- 				} else {
--					BUF_PUTS(buf, "\u2588\u2588");
-+					BUF_PUTCHAR(buf, '\r');
-+					BUF_PUTCHAR(buf, '\n');
-+				}
-+			}
 +		}
++
++		if (prev_cells) {
++			prev_cells_valid = true;
++		}
++		write_all_stdout(output_buffer, (size_t)(buf - output_buffer));
++		return;
++	}
++
++	/* fill output buffer (ASCII / BLOCK / BRAILLE) */
++	if (pad_top > 0 || pad_left > 0) {
++		BUF_PUTS(buf, "\033[");
++		buf = put_uint(buf, 1U + pad_top);
++		*buf++ = ';';
++		buf = put_uint(buf, 1U + pad_left);
++		*buf++ = 'H';
 +	} else {
-+		for (row = 0; row < DOOMGENERIC_RESY; row++) {
-+			for (col = 0; col < DOOMGENERIC_RESX; col++) {
-+				if (gamma_correct_enabled) {
-+					pixel->r = byte_sqrt[pixel->r];
-+					pixel->g = byte_sqrt[pixel->g];
-+					pixel->b = byte_sqrt[pixel->b];
-+				}
++		BUF_PUTS(buf, "\033[;H"); /* move cursor to top left corner */
++	}
 +
-+				if (color_enabled && (color ^ *(uint32_t *)pixel) & 0x00FFFFFF) {
-+					BUF_PUTS(buf, "\033[38;2;");
-+					BUF_ITOA(buf, pixel->r);
-+					BUF_PUTCHAR(buf, ';');
-+					BUF_ITOA(buf, pixel->g);
-+					BUF_PUTCHAR(buf, ';');
-+					BUF_ITOA(buf, pixel->b);
-+					BUF_PUTCHAR(buf, 'm');
-+					color = *(uint32_t *)pixel;
- 				}
--				break;
--			case BRAILLE:
--				if (gradient_enabled) {
--					const size_t idx =
--						(pixel->r + pixel->g + pixel->b) * 8 / RGB_SUM_MAX;
--					if (idx) {
--						const char *const gradient = braille_grads[idx - 1];
--						const size_t len =
--							braille_grad_lengths[idx - 1] / 3;
--						BUF_MEMCPY(
--							buf, &gradient[(dg_random() % len) * 3], 3);
--						BUF_MEMCPY(
--							buf, &gradient[(dg_random() % len) * 3], 3);
+ 	if (erase_enabled)
+ 		BUF_PUTS(buf, "\033[2J");
+ 	if (bold_enabled)
+ 		BUF_PUTS(buf, "\033[1m");
 +
-+				switch (character_set) {
-+				case ASCII:
-+				case HALFBLOCK:
-+					if (gradient_enabled) {
-+						const char v_char = grad[(pixel->r + pixel->g + pixel->b)
-+							* static_strlen(grad) / RGB_SUM_MAX];
-+						BUF_PUTCHAR(buf, v_char);
-+						BUF_PUTCHAR(buf, v_char);
-+					} else {
-+						BUF_PUTS(buf, "##");
-+					}
-+					break;
-+				case BLOCK:
-+					if (gradient_enabled) {
-+						const size_t idx = (pixel->r + pixel->g + pixel->b)
-+							* (UNICODE_GRAD_LEN + 1U) / RGB_SUM_MAX;
-+						if (idx) {
-+							const void *const v_char =
-+								&unicode_grad[(idx - 1) * 3];
-+							BUF_MEMCPY(buf, v_char, 3);
-+							BUF_MEMCPY(buf, v_char, 3);
-+						} else {
-+							BUF_PUTS(buf, "  ");
-+						}
-+					} else {
-+						BUF_PUTS(buf, "\u2588\u2588");
-+					}
-+					break;
-+				case BRAILLE:
-+					if (gradient_enabled) {
-+						const size_t idx =
-+							(pixel->r + pixel->g + pixel->b) * 8 / RGB_SUM_MAX;
-+						if (idx) {
-+							const char *const gradient = braille_grads[idx - 1];
-+							const size_t len =
-+								braille_grad_lengths[idx - 1] / 3;
-+							BUF_MEMCPY(
-+								buf, &gradient[(dg_random() % len) * 3], 3);
-+							BUF_MEMCPY(
-+								buf, &gradient[(dg_random() % len) * 3], 3);
-+						} else {
-+							BUF_PUTS(buf, "  ");
-+						}
- 					} else {
--						BUF_PUTS(buf, "  ");
-+						BUF_PUTS(buf, "\u28ff\u28ff");
-+					}
-+					break;
-+				}
-+
-+				pixel++;
-+			}
-+			if (row + 1 < DOOMGENERIC_RESY) {
-+				if (pad_left > 0) {
-+					char next_pos[32];
-+					int next_len = snprintf(next_pos, sizeof(next_pos), "\033[%u;%uH", 1 + pad_top + row + 1, 1 + pad_left);
-+					if (next_len > 0) {
-+						BUF_MEMCPY(buf, next_pos, (size_t)next_len);
- 					}
- 				} else {
--					BUF_PUTS(buf, "\u28ff\u28ff");
-+					BUF_PUTCHAR(buf, '\r');
-+					BUF_PUTCHAR(buf, '\n');
- 				}
--				break;
+ 	for (row = 0; row < DOOMGENERIC_RESY; row++) {
+ 		for (col = 0; col < DOOMGENERIC_RESX; col++) {
+ 			if (gamma_correct_enabled) {
+@@ -333,18 +688,13 @@ void DG_DrawFrame(void)
  			}
--
--			pixel++;
+ 
+ 			if (color_enabled && (color ^ *(uint32_t *)pixel) & 0x00FFFFFF) {
+-				BUF_PUTS(buf, "\033[38;2;");
+-				BUF_ITOA(buf, pixel->r);
+-				BUF_PUTCHAR(buf, ';');
+-				BUF_ITOA(buf, pixel->g);
+-				BUF_PUTCHAR(buf, ';');
+-				BUF_ITOA(buf, pixel->b);
+-				BUF_PUTCHAR(buf, 'm');
++				buf = put_fg_rgb(buf, *pixel);
+ 				color = *(uint32_t *)pixel;
+ 			}
+ 
+ 			switch (character_set) {
+ 			case ASCII:
++			case HALFBLOCK:
+ 				if (gradient_enabled) {
+ 					const char v_char = grad[(pixel->r + pixel->g + pixel->b)
+ 						* static_strlen(grad) / RGB_SUM_MAX];
+@@ -393,14 +743,23 @@ void DG_DrawFrame(void)
+ 
+ 			pixel++;
  		}
 -		if (row + 1 < DOOMGENERIC_RESY)
 -			BUF_PUTCHAR(buf, '\n');
-+		if (color_enabled || bold_enabled)
-+			BUF_PUTS(buf, "\033[0m");
++		if (row + 1 < DOOMGENERIC_RESY) {
++			if (pad_left > 0) {
++				BUF_PUTS(buf, "\033[");
++				buf = put_uint(buf, 1U + pad_top + row + 1U);
++				*buf++ = ';';
++				buf = put_uint(buf, 1U + pad_left);
++				*buf++ = 'H';
++			} else {
++				BUF_PUTCHAR(buf, '\r');
++				BUF_PUTCHAR(buf, '\n');
++			}
++		}
  	}
--	if (color_enabled || bold_enabled)
--		BUF_PUTS(buf, "\033[0m");
- 	BUF_PUTCHAR(buf, '\0');
+ 	if (color_enabled || bold_enabled)
+ 		BUF_PUTS(buf, "\033[0m");
+-	BUF_PUTCHAR(buf, '\0');
  
- 	CALL_STDOUT(fputs(output_buffer, stdout), "DG_DrawFrame: fputs error %d");
-+	fflush(stdout);
+-	CALL_STDOUT(fputs(output_buffer, stdout), "DG_DrawFrame: fputs error %d");
++	write_all_stdout(output_buffer, (size_t)(buf - output_buffer));
  }
  
  void DG_SleepMs(const uint32_t ms)
-@@ -591,6 +804,14 @@ static inline unsigned char convertCsiToDoomKey(const char **const buf)
+@@ -591,6 +950,14 @@ static inline unsigned char convertCsiToDoomKey(const char **const buf)
  static inline unsigned char convertSs3ToDoomKey(const char **const buf)
  {
  	switch (**buf) {
@@ -674,7 +743,7 @@ index 9791935..319d782 100644
  	case 'P':
  		return KEY_F1;
  	case 'Q':
-@@ -608,6 +829,7 @@ static inline unsigned char convertToDoomKey(const char **const buf)
+@@ -608,6 +975,7 @@ static inline unsigned char convertToDoomKey(const char **const buf)
  {
  	switch (**buf) {
  	case '\012':
@@ -682,7 +751,7 @@ index 9791935..319d782 100644
  		return KEY_ENTER;
  	case '\033':
  		switch (*((*buf) + 1)) {
-@@ -680,7 +902,14 @@ void DG_ReadInput(void)
+@@ -680,7 +1048,14 @@ void DG_ReadInput(void)
  	newt.c_cc[VTIME] = 0;
  	CALL(tcsetattr(STDIN_FILENO, TCSANOW, &newt), "DG_DrawFrame: tcsetattr error %d");
  
@@ -698,7 +767,7 @@ index 9791935..319d782 100644
  
  	CALL(tcsetattr(STDIN_FILENO, TCSANOW, &oldt), "DG_DrawFrame: tcsetattr error %d");
  
-@@ -700,7 +929,7 @@ void DG_ReadInput(void)
+@@ -700,7 +1075,7 @@ void DG_ReadInput(void)
  
  	int i;
  	for (i = 1; i < 256; i++) {
@@ -707,7 +776,7 @@ index 9791935..319d782 100644
  			continue;
  
  		/* depressed events */
-@@ -711,8 +940,7 @@ void DG_ReadInput(void)
+@@ -711,8 +1086,7 @@ void DG_ReadInput(void)
  		}
  
  		/* pressed events */
@@ -780,6 +849,64 @@ index e35f2a1..ad904b4 100644
 -            break;
          }
      }
+ 
+diff --git a/src/i_main.c b/src/i_main.c
+index b192227..237023e 100644
+--- a/src/i_main.c
++++ b/src/i_main.c
+@@ -18,7 +18,10 @@
+ 
+ //#include "config.h"
+ 
++#include <ctype.h>
+ #include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ 
+ //#include "doomtype.h"
+ //#include "i_system.h"
+@@ -39,10 +42,38 @@ void dg_Create();
+ 
+ int main(int argc, char **argv)
+ {
+-    // save arguments
+-
+-    myargc = argc;
+-    myargv = argv;
++    // Normalize any whitespace-grouped flag strings (e.g. " -blocks" from shell scripts)
++    char **norm_argv = malloc((size_t)(argc * 8 + 2) * sizeof(char *));
++    int norm_argc = 0;
++    if (norm_argv) {
++        for (int i = 0; i < argc; i++) {
++            char *arg = argv[i];
++            if (!arg) continue;
++            const char *trimmed = arg;
++            while (*trimmed && isspace((unsigned char)*trimmed)) trimmed++;
++            if (i > 0 && *trimmed == '\0') {
++                continue;
++            }
++            if (i > 0 && *trimmed == '-' && (trimmed != arg || strchr(trimmed, ' ') != NULL)) {
++                char *copy = strdup(trimmed);
++                if (copy) {
++                    char *tok = strtok(copy, " \t\r\n");
++                    while (tok) {
++                        norm_argv[norm_argc++] = tok;
++                        tok = strtok(NULL, " \t\r\n");
++                    }
++                    continue;
++                }
++            }
++            norm_argv[norm_argc++] = arg;
++        }
++        norm_argv[norm_argc] = NULL;
++        myargc = norm_argc;
++        myargv = norm_argv;
++    } else {
++        myargc = argc;
++        myargv = argv;
++    }
+ 
+     M_FindResponseFile();
  
 diff --git a/src/i_system.c b/src/i_system.c
 index eba110d..80dee40 100644
